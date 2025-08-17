@@ -26,13 +26,71 @@ export const getUserData = async (req, res) => {
 }
 
 // Purchase Course 
+// export const purchaseCourse = async (req, res) => {
+
+//     try {
+
+//         const { courseId } = req.body
+//         const { origin } = req.headers
+
+
+//         const userId = req.auth.userId
+
+//         const courseData = await Course.findById(courseId)
+//         const userData = await User.findById(userId)
+
+//         if (!userData || !courseData) {
+//             return res.json({ success: false, message: 'Data Not Found' })
+//         }
+
+//         const purchaseData = {
+//             courseId: courseData._id,
+//             userId,
+//             amount: (courseData.coursePrice - courseData.discount * courseData.coursePrice / 100).toFixed(2),
+//         }
+
+//         const newPurchase = await Purchase.create(purchaseData)
+
+//         // Stripe Gateway Initialize
+//         const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY)
+
+//         const currency = process.env.CURRENCY.toLocaleLowerCase()
+
+//         // Creating line items to for Stripe
+//         const line_items = [{
+//             price_data: {
+//                 currency,
+//                 product_data: {
+//                     name: courseData.courseTitle
+//                 },
+//                 unit_amount: Math.floor(newPurchase.amount) * 100
+//             },
+//             quantity: 1
+//         }]
+
+//         const session = await stripeInstance.checkout.sessions.create({
+//             success_url: `${origin}/loading/my-enrollments`,
+//             cancel_url: `${origin}/`,
+//             line_items: line_items,
+//             mode: 'payment',
+//             metadata: {
+//                 purchaseId: newPurchase._id.toString()
+//             }
+//         })
+
+//         res.json({ success: true, session_url: session.url });
+
+
+//     } catch (error) {
+//         res.json({ success: false, message: error.message });
+//     }
+// }
+// Purchase Course 
+// Purchase Course 
 export const purchaseCourse = async (req, res) => {
-
     try {
-
         const { courseId } = req.body
         const { origin } = req.headers
-
 
         const userId = req.auth.userId
 
@@ -43,20 +101,51 @@ export const purchaseCourse = async (req, res) => {
             return res.json({ success: false, message: 'Data Not Found' })
         }
 
+        // Calculate final amount
+        const amount = (courseData.coursePrice - (courseData.discount * courseData.coursePrice / 100)).toFixed(2)
+
+        // Case 1: Free Course → enroll immediately
+        if (amount == 0) {
+            // Prevent duplicate enrollments
+            if (!userData.enrolledCourses.includes(courseData._id)) {
+                userData.enrolledCourses.push(courseData._id)
+            }
+            if (!courseData.enrolledStudents.includes(userData._id)) {
+                courseData.enrolledStudents.push(userData._id)
+            }
+
+            await userData.save()
+            await courseData.save()
+
+            // Record purchase with "completed" status
+            const purchaseData = {
+                courseId: courseData._id,
+                userId,
+                amount: 0,
+                status: "completed"
+            }
+            await Purchase.create(purchaseData)
+
+            return res.json({
+                success: true,
+                message: 'Course enrolled successfully (Free)',
+                redirect: '/loading/my-enrollments'
+            })
+        }
+
+        // Case 2: Paid Course → Stripe checkout
         const purchaseData = {
             courseId: courseData._id,
             userId,
-            amount: (courseData.coursePrice - courseData.discount * courseData.coursePrice / 100).toFixed(2),
+            amount
         }
-
         const newPurchase = await Purchase.create(purchaseData)
 
         // Stripe Gateway Initialize
         const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY)
+        const currency = process.env.CURRENCY.toLowerCase()
 
-        const currency = process.env.CURRENCY.toLocaleLowerCase()
-
-        // Creating line items to for Stripe
+        // Creating line items for Stripe
         const line_items = [{
             price_data: {
                 currency,
@@ -71,20 +160,19 @@ export const purchaseCourse = async (req, res) => {
         const session = await stripeInstance.checkout.sessions.create({
             success_url: `${origin}/loading/my-enrollments`,
             cancel_url: `${origin}/`,
-            line_items: line_items,
+            line_items,
             mode: 'payment',
             metadata: {
                 purchaseId: newPurchase._id.toString()
             }
         })
 
-        res.json({ success: true, session_url: session.url });
-
-
+        res.json({ success: true, session_url: session.url })
     } catch (error) {
-        res.json({ success: false, message: error.message });
+        res.json({ success: false, message: error.message })
     }
 }
+
 
 // Users Enrolled Courses With Lecture Links
 export const userEnrolledCourses = async (req, res) => {
